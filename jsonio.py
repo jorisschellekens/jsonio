@@ -1,3 +1,4 @@
+import enum
 import json
 import re
 import types
@@ -15,16 +16,20 @@ class JSONIO:
     #
 
     @staticmethod
-    def _get_empty_obj_from_str(fully_quantified_class_path: str) -> typing.Any:
+    def _get_class_obj_from_str(fully_quantified_class_path: str) -> typing.Any:
         from importlib import import_module
         try:
             module_path, class_name = fully_quantified_class_path.rsplit('.', 1)
             module = import_module(module_path)
-            klass = getattr(module, class_name)
+            return getattr(module, class_name)
         except (ImportError, AttributeError) as e:
             raise ImportError(fully_quantified_class_path)
 
+    @staticmethod
+    def _get_empty_obj_from_str(fully_quantified_class_path: str) -> typing.Any:
+
         # overwrite __init__
+        klass = JSONIO._get_class_obj_from_str(fully_quantified_class_path)
         prev_init = klass.__init__
         klass.__init__ = lambda x: None
 
@@ -44,10 +49,12 @@ class JSONIO:
         strs: typing.Set[str] = set()
         while len(stk) > 0:
             y: typing.Any = stk[0]
+            stk.pop(0)
             y_id: int = id(y)
             if y_id in dne:
                 continue
-            stk.pop(0)
+
+            dne.add(y_id)
 
             #
             # primitives
@@ -114,6 +121,12 @@ class JSONIO:
                      xref: typing.Dict[str, typing.Any] = {}) -> typing.Any:
 
         #
+        # None
+        #
+        if x is None:
+            return None
+
+        #
         # primitive
         #
         if isinstance(x, bool) or isinstance(x, float) or isinstance(x, int):
@@ -164,6 +177,14 @@ class JSONIO:
                      xref: typing.Dict[str, typing.Any] = {}) -> typing.Any:
 
         #
+        # None
+        #
+        if x is None:
+            if is_root_object:
+                return [None, {}]
+            return None
+
+        #
         # primitive
         #
         if isinstance(x, bool)          \
@@ -176,49 +197,83 @@ class JSONIO:
                 return x
 
         #
+        # recursion
+        #
+        xref_id:str = xref_id_template % id(x)
+        if xref_id in xref:
+            return xref_id
+
+        #
         # aggregation types
         #
         if isinstance(x, dict):
+            dict_out = {}
+            if not is_root_object:
+                xref[xref_id] = dict_out
+            for k,v in x.items():
+                k2 = JSONIO._obj_to_json(k, False, xref_id_template, xref)
+                v2 = JSONIO._obj_to_json(v, False, xref_id_template, xref)
+                dict_out[k2] = v2
             if is_root_object:
-                return [{JSONIO._obj_to_json(k, False, xref_id_template, xref):JSONIO._obj_to_json(v, False, xref_id_template, xref) for k,v in x.items()}, xref]
-            else:
-                xref[xref_id_template % id(x)] = {JSONIO._obj_to_json(k, False, xref_id_template, xref):JSONIO._obj_to_json(v, False, xref_id_template, xref) for k,v in x.items()}
-                return xref_id_template % id(x)
+                return [dict_out, xref]
+            return xref_id
         if isinstance(x, list):
+            list_out = []
+            if not is_root_object:
+                xref[xref_id] = list_out
+            for k in x:
+                list_out.append(JSONIO._obj_to_json(k, False, xref_id_template, xref))
             if is_root_object:
-                return [[JSONIO._obj_to_json(k, False, xref_id_template, xref) for k in x], xref]
-            else:
-                xref[xref_id_template % id(x)] = [JSONIO._obj_to_json(k, False, xref_id_template, xref) for k in x]
-                return xref_id_template % id(x)
+                return [list_out, xref]
+            return xref_id
         if isinstance(x, set):
+            set_out = {"__class__": "set",
+                       "__values__": []}
+            if not is_root_object:
+                xref[xref_id] = set_out
+            for k in x:
+                set_out["__values__"].append(JSONIO._obj_to_json(k, False, xref_id_template, xref))
             if is_root_object:
-                return [{"__values__": [JSONIO._obj_to_json(k, False, xref_id_template, xref) for k in x], "__class__": "set"}, xref]
-            else:
-                xref[xref_id_template % id(x)] = {"__values__": [JSONIO._obj_to_json(k, False, xref_id_template, xref) for k in x], "__class__": "set"}
-                return xref_id_template % id(x)
+                return [set_out, xref]
+            return xref_id
         if isinstance(x, tuple):
+            tuple_out = {"__class__": "tuple",
+                         "__values__": []}
+            if not is_root_object:
+                xref[xref_id] = tuple_out
+            for k in x:
+                tuple_out["__values__"].append(JSONIO._obj_to_json(k, False, xref_id_template, xref))
             if is_root_object:
-                return [{"__values__": [JSONIO._obj_to_json(k, False, xref_id_template, xref) for k in x], "__class__": "tuple"}, xref]
-            else:
-                xref[xref_id_template % id(x)] = {"__values__": [JSONIO._obj_to_json(k, False, xref_id_template, xref) for k in x], "__class__": "tuple"}
-                return xref_id_template % id(x)
+                return [tuple_out, xref]
+            return xref_id
+
+        #
+        # enums
+        #
+        if isinstance(x, enum.Enum):
+            return {
+                "__class__": x.__class__.__module__ + "." + x.__class__.__qualname__,
+                "__value__": x.value
+            }
 
         #
         # objects
         #
         x_as_dict: typing.Dict[typing.Any, typing.Any] = {}
-        for key, value in x.__dict__.items():
-            if isinstance(value, types.FunctionType):
-                continue
-            if isinstance(value, types.MethodType):
-                continue
-            x_as_dict[JSONIO._obj_to_json(key, False, xref_id_template, xref)] = JSONIO._obj_to_json(value, False, xref_id_template, xref)
         x_as_dict["__class__"] = x.__class__.__module__ + "." + x.__class__.__qualname__
+        if not is_root_object:
+            xref[xref_id] = x_as_dict
+        for fn, fv in x.__dict__.items():
+            if isinstance(fv, types.FunctionType):
+                continue
+            if isinstance(fv, types.MethodType):
+                continue
+            fn2 = JSONIO._obj_to_json(fn, False, xref_id_template, xref)
+            fv2 = JSONIO._obj_to_json(fv, False, xref_id_template, xref)
+            x_as_dict[fn2] = fv2
         if is_root_object:
             return [x_as_dict, xref]
-        else:
-            xref[xref_id_template % id(x)] = x_as_dict
-            return xref_id_template % id(x)
+        return xref_id
 
 
     #

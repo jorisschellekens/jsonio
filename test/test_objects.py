@@ -1,3 +1,4 @@
+import typing
 import unittest
 
 from jsonio import JSONIO
@@ -20,12 +21,18 @@ class Line:
     def __init__(self, p0: Point, p1: Point):
         self._p0: Point = p0
         self._p1: Point = p1
+        self._universe: typing.Optional["Universe"] = None
 
     def __len__(self):
         return ((self._p0.get_x() - self._p1.get_x()) ** 2 + (self._p0.get_y() - self._p1.get_y()) ** 2) ** 0.5
 
+class Universe:
 
-class TestPrimitives(unittest.TestCase):
+    def __init__(self,
+                 lines: typing.List[Line]):
+        self._lines: typing.List[Line] = lines
+
+class TestObjects(unittest.TestCase):
 
     def test_point_to_json(self):
         a: bool = True
@@ -56,3 +63,21 @@ class TestPrimitives(unittest.TestCase):
 
     def test_list_of_line_to_json(self):
         pass
+
+    def test_recursive_object_to_json(self):
+        a = Point(0, 0)
+        b = Point(1, 1)
+        c = Point(2, 2)
+
+        d = Line(a, b)
+        e = Line(a, c)
+        f = Line(b, c)
+
+        g = Universe([d, e, f])
+        d._universe = g
+        e._universe = g
+        f._universe = g
+
+        h = JSONIO.obj_to_json(g)
+
+        i = JSONIO.json_to_obj(h)
